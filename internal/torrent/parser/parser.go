@@ -8,7 +8,7 @@ import (
 	"github.com/zeebo/bencode"
 )
 
-type TorrentFile struct {
+type MetaInfo struct {
 	Announce     string      `bencode:"announce"`
 	AnnounceList [][]string  `bencode:"announce-list"`
 	Info         TorrentInfo `bencode:"info"`
@@ -26,15 +26,15 @@ type TorrentInfo struct {
 	PieceLength int64  `bencode:"piece length"`
 }
 
-func ParseTorrentFile(filePath string) (TorrentFile, error) {
+func ParseTorrentFile(filePath string) (MetaInfo, error) {
 	fileContent, err := os.ReadFile(filePath)
 	if err != nil {
-		return TorrentFile{}, err
+		return MetaInfo{}, err
 	}
-	torrent := TorrentFile{}
+	torrent := MetaInfo{}
 	if err := bencode.DecodeBytes(fileContent, &torrent); err != nil {
 		fmt.Println("Error decoding torrent file:", err)
-		return TorrentFile{}, err
+		return MetaInfo{}, err
 	}
 
 	fmt.Printf("Announce: %s\n", torrent.Announce)
