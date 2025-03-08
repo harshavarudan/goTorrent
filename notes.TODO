@@ -1,0 +1,26 @@
+TODO
+thread pool
+restructure whole structs
+have downloader and uploader in the tracker
+updated set
+
+use only getters for getting info no setters
+learn about downloader algo ie sequential rarest firs etc and implementation
+
+Torrent{
+    Metainfo
+    PeerId
+
+    tracker{
+        *FileStatusMetadata
+        *PeerId
+        downloader{
+        infoAbout downloaded stuff ig
+
+        }
+        uploader{
+        not sure
+        }
+
+           }
+       }

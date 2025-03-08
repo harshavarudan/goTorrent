@@ -4,15 +4,27 @@ import (
 	"crypto/sha1"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/zeebo/bencode"
 
 	"github.com/harshavarudan/goTorrent/internal/torrent/parser"
 	"github.com/harshavarudan/goTorrent/internal/torrent/tracker"
+	"github.com/harshavarudan/goTorrent/internal/worker"
 )
 
 func main() {
 	// code
+	d := worker.NewDispatcher(20, test)
+	d.Run()
+	d.AddWorker()
+	go func() {
+		for i := 0; i < 25; i++ {
+			time.Sleep(1 * time.Second)
+			go d.SendSignal(i)
+		}
+	}()
+
 	fmt.Println("Hello, World!")
 	file, err := parser.ParseTorrentFile("internal/torrent/parser/Hotshots.torrent")
 	if err != nil {
@@ -39,4 +51,7 @@ func main() {
 
 	//int
 
+}
+func test() {
+	fmt.Println("testing")
 }

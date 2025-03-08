@@ -10,4 +10,5 @@ type Torrent struct {
 	//downloader *downloader
 	//uploader *uploader
 	metaInfo *parser.MetaInfo
+	peerSet  map[string]bool //might change type
 }

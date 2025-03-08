@@ -7,6 +7,8 @@ import (
 	"net"
 	"strings"
 	"time"
+
+	"github.com/harshavarudan/goTorrent/internal/worker"
 )
 
 // Single instance of tracker (only udp trackers)
@@ -31,11 +33,16 @@ type AnnounceRequest struct {
 	port       uint16
 }
 type Tracker struct {
-	fm         FileStatusMetadata
-	conn       *net.UDPConn
-	state      int             //0 for tracker to stop tracking,1 to periodically check
-	peerSet    map[string]bool //might change type
+	fm      FileStatusMetadata
+	conn    *net.UDPConn
+	state   int             //0 for tracker to stop tracking,1 to periodically check
+	peerSet map[string]bool //might change type
+	//Peer set for tracker, different from torrent peer set but essentially does the same
+	//Torrent peer set has to be put in sync with tracker peer set
+	//design decision for no reason
 	trackerSet map[*net.UDPAddr]bool
+	//TODO achieve unique peer id
+	//id is only generated once. Normally an id is set every time the client loads and should be the same until it’s closed.
 }
 
 func (t Tracker) Init(infoHash [20]byte, trackerList ...string) {
@@ -57,9 +64,10 @@ func (t Tracker) Init(infoHash [20]byte, trackerList ...string) {
 	}
 	t.state = 1
 	t.fm.infoHash = infoHash
+
 	//adding to tracker set
 	for _, val := range trackerList {
-		udpAddr, ok := parseTrackerList(val)
+		udpAddr, ok := parseUDPTrackerList(val)
 		if ok {
 			t.trackerSet[udpAddr] = true
 		}
@@ -67,10 +75,16 @@ func (t Tracker) Init(infoHash [20]byte, trackerList ...string) {
 	t.establishConnection()
 
 }
+func test() {
 
-// establish via go routines
+}
+
+// TODO establish via go routines
 // implement retry also
 func (t Tracker) establishConnection() {
+	//New Dispatcher
+	dispatcher := worker.NewDispatcher(len(t.trackerSet), test)
+	dispatcher.Run()
 	for addresses, ok := range t.trackerSet {
 		if ok {
 			id, err := establishConnection(t.conn, addresses)
@@ -78,13 +92,15 @@ func (t Tracker) establishConnection() {
 				fmt.Println("Error establishing connection:", err)
 				continue
 			}
-			//change peer id
+			//TODO change peer id
 			var peerID [20]byte
 			_, err = rand.Read(peerID[:])
 			if err != nil {
 				fmt.Println("Error generating peer ID:", err)
 				return
 			}
+			//change default values
+			//TODO get details of files from downloader struct?
 			announce(AnnounceRequest{
 				connectionID: id,
 				infoHash:     t.fm.infoHash,
@@ -104,7 +120,7 @@ func (t Tracker) establishConnection() {
 }
 
 // TODO parse only udp ones and not others and return bool
-func parseTrackerList(url string) (*net.UDPAddr, bool) {
+func parseUDPTrackerList(url string) (*net.UDPAddr, bool) {
 
 	url, _ = strings.CutPrefix(url, "udp://")
 	url, _ = strings.CutSuffix(url, "/announce")
@@ -159,16 +175,34 @@ func establishConnection(conn *net.UDPConn, addr *net.UDPAddr) (uint64, error) {
 
 }
 
-// TODO
-// use some default values for now
+// TODO add to peer set
+
 func announce(request AnnounceRequest, conn *net.UDPConn, addr *net.UDPAddr) {
 	//Construct buffer
 	buffer := make([]byte, 98)
 	// Action for announce request is 1
 	action := uint32(1)
+
 	// Generate a random transaction ID
 	transactionID := uint32(time.Now().UnixNano())
-	// Construct the announce request packet
+
+	// Construct the announcement request packet
+	/*
+		Offset  Size    Name    Value
+		0       64-bit integer  connection_id
+		8       32-bit integer  action          1 // announce
+		12      32-bit integer  transaction_id
+		16      20-byte string  info_hash
+		36      20-byte string  peer_id
+		56      64-bit integer  downloaded
+		64      64-bit integer  left
+		72      64-bit integer  uploaded
+		80      32-bit integer  event           0 // 0: none; 1: completed; 2: started; 3: stopped
+		84      32-bit integer  IP address      0 // default
+		88      32-bit integer  key             ? // random
+		92      32-bit integer  num_want        -1 // default
+		96      16-bit integer  port            ? // should be between
+	*/
 	binary.BigEndian.PutUint64(buffer[0:8], request.connectionID)
 	binary.BigEndian.PutUint32(buffer[8:12], action)
 	binary.BigEndian.PutUint32(buffer[12:16], transactionID)
@@ -208,4 +242,7 @@ func announce(request AnnounceRequest, conn *net.UDPConn, addr *net.UDPAddr) {
 	fmt.Println("Leechers:", leechers)
 	fmt.Println("Seeders:", seeders)
 
+}
+func (t Tracker) GetPeerSet() (peerSet map[string]bool) {
+	return t.peerSet
 }
