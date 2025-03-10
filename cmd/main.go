@@ -8,8 +8,8 @@ import (
 
 	"github.com/zeebo/bencode"
 
+	"github.com/harshavarudan/goTorrent/internal/torrent"
 	"github.com/harshavarudan/goTorrent/internal/torrent/parser"
-	"github.com/harshavarudan/goTorrent/internal/torrent/tracker"
 	"github.com/harshavarudan/goTorrent/internal/worker"
 )
 
@@ -32,7 +32,7 @@ func main() {
 		return
 	}
 	fmt.Println(file.Announce)
-	t := tracker.Tracker{}
+	t := torrent.TrackerSet{}
 	trackerList := make([]string, 0)
 	for _, val := range file.AnnounceList {
 		trackerList = append(trackerList, val...)

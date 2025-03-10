@@ -1,4 +1,4 @@
-package tracker
+package torrent
 
 import (
 	"crypto/rand"
@@ -7,46 +7,52 @@ import (
 	"net"
 	"strings"
 	"time"
-
-	"github.com/harshavarudan/goTorrent/internal/worker"
 )
 
 // Single instance of tracker (only udp trackers)
 // single socket for udp is enough
-type FileStatusMetadata struct {
-	infoHash   [20]byte
-	downloaded uint64
-	left       uint64
-}
+
 type AnnounceRequest struct {
 	connectionID uint64
-
-	infoHash   [20]byte
-	peerID     [20]byte
-	downloaded uint64
-	left       uint64
-	uploaded   uint64
-	event      uint32
-	ip         uint32
-	key        uint32
-	numWant    int32
-	port       uint16
+	infoHash     [20]byte
+	peerID       [20]byte
+	downloaded   uint64
+	left         uint64
+	uploaded     uint64
+	event        uint32
+	ip           uint32
+	key          uint32
+	numWant      int32
+	port         uint16
 }
-type Tracker struct {
-	fm      FileStatusMetadata
-	conn    *net.UDPConn
-	state   int             //0 for tracker to stop tracking,1 to periodically check
-	peerSet map[string]bool //might change type
+type TrackerSet struct {
+	conn  *net.UDPConn
+	state int //0 for tracker to stop tracking,1 to periodically check
 	//Peer set for tracker, different from torrent peer set but essentially does the same
 	//Torrent peer set has to be put in sync with tracker peer set
 	//design decision for no reason
-	trackerSet map[*net.UDPAddr]bool
+	trackerSet map[Tracker]bool
 	//TODO achieve unique peer id
 	//id is only generated once. Normally an id is set every time the client loads and should be the same until it’s closed.
+
+	//Add number of workers needed time for periodic check ...
+	workerCount                int
+	periodicCheckTimeInSeconds time.Duration
+}
+type Tracker struct {
+	address        *net.UDPAddr
+	isAlive        bool
+	retries        int
+	lastConnection time.Time
+}
+type TrackerJob struct {
+	trackerAddr string
+	// additional fields as needed
 }
 
-func (t Tracker) Init(infoHash [20]byte, trackerList ...string) {
+func (t TrackerSet) Init(fm *MetaDataInfo, infoHash [20]byte, trackerList ...string) {
 	//create new socket
+
 	if t.conn == nil {
 		var err error
 		t.conn, err = net.ListenUDP("udp", nil)
@@ -57,22 +63,22 @@ func (t Tracker) Init(infoHash [20]byte, trackerList ...string) {
 		}
 	}
 	if t.trackerSet == nil {
-		t.trackerSet = make(map[*net.UDPAddr]bool)
+		t.trackerSet = make(map[Tracker]bool)
 	}
-	if t.peerSet == nil {
-		t.peerSet = make(map[string]bool)
-	}
+
 	t.state = 1
-	t.fm.infoHash = infoHash
+	fm.InfoHash = infoHash
 
 	//adding to tracker set
 	for _, val := range trackerList {
 		udpAddr, ok := parseUDPTrackerList(val)
 		if ok {
-			t.trackerSet[udpAddr] = true
+			//TODO
+			fmt.Println(udpAddr)
+			//t.trackerSet[udpAddr] = true
 		}
 	}
-	t.establishConnection()
+	t.establishConnection(fm)
 
 }
 func test() {
@@ -81,11 +87,11 @@ func test() {
 
 // TODO establish via go routines
 // implement retry also
-func (t Tracker) establishConnection() {
+func (t TrackerSet) establishConnection(fm *MetaDataInfo) {
 	//New Dispatcher
-	dispatcher := worker.NewDispatcher(len(t.trackerSet), test)
-	dispatcher.Run()
-	for addresses, ok := range t.trackerSet {
+
+	for tracker, ok := range t.trackerSet {
+		addresses := tracker.address
 		if ok {
 			id, err := establishConnection(t.conn, addresses)
 			if err != nil {
@@ -103,7 +109,7 @@ func (t Tracker) establishConnection() {
 			//TODO get details of files from downloader struct?
 			announce(AnnounceRequest{
 				connectionID: id,
-				infoHash:     t.fm.infoHash,
+				infoHash:     fm.InfoHash,
 				peerID:       peerID,
 				downloaded:   0,
 				left:         2097152, // Default value, replace with actual remaining size
@@ -117,6 +123,7 @@ func (t Tracker) establishConnection() {
 
 		}
 	}
+
 }
 
 // TODO parse only udp ones and not others and return bool
@@ -125,7 +132,7 @@ func parseUDPTrackerList(url string) (*net.UDPAddr, bool) {
 	url, _ = strings.CutPrefix(url, "udp://")
 	url, _ = strings.CutSuffix(url, "/announce")
 
-	fmt.Println("Tracker URL:", url)
+	fmt.Println("TrackerSet URL:", url)
 	udpAddr, err := net.ResolveUDPAddr("udp", url)
 	if err != nil {
 		fmt.Println("Error resolving UDP address:", err)
@@ -242,7 +249,4 @@ func announce(request AnnounceRequest, conn *net.UDPConn, addr *net.UDPAddr) {
 	fmt.Println("Leechers:", leechers)
 	fmt.Println("Seeders:", seeders)
 
-}
-func (t Tracker) GetPeerSet() (peerSet map[string]bool) {
-	return t.peerSet
 }
