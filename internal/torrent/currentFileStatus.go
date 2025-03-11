@@ -1,7 +1,7 @@
 package torrent
 
-type FileStatusMetadata struct {
-	infoHash   [20]byte
-	downloaded uint64
-	left       uint64
+type FileStatusMetadata struct { //store this as a file
+	downloaded         uint64
+	left               uint64
+	downloadedFilePath string
 }

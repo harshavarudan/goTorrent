@@ -1,9 +1,36 @@
 package torrent
 
 type Torrent struct {
-	tracker *TrackerSet
+	torrentFilePath string
+	tracker         *TrackerSet
 	//downloader *downloader
 	//uploader *uploader
-	metaInfo *MetaDataInfo
-	PeerSet  *PeerSet
+	metaInfo          *MetaDataInfo
+	PeerSet           *PeerSet
+	currentFileStatus *FileStatusMetadata
+	//get default settings or store settings
+	//optional: pick where its left off in case server crashes
+}
+
+func NewTorrent(filePath string) Torrent {
+
+	return Torrent{
+		torrentFilePath: filePath,
+		tracker: &TrackerSet{
+			conn:                       nil,
+			state:                      0,
+			trackerSet:                 map[Tracker]bool{},
+			workerCount:                10, //default
+			periodicCheckTimeInSeconds: 60,
+		},
+		metaInfo:          &MetaDataInfo{},
+		PeerSet:           &PeerSet{},
+		currentFileStatus: &FileStatusMetadata{},
+	}
+}
+
+// parse the file
+func (t Torrent) ParseFile() error {
+	return ParseTorrentFile(t.torrentFilePath, t.metaInfo)
+
 }

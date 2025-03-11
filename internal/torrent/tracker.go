@@ -50,7 +50,12 @@ type TrackerJob struct {
 	// additional fields as needed
 }
 
-func (t TrackerSet) Init(fm *MetaDataInfo, infoHash [20]byte, trackerList ...string) {
+func (t TrackerJob) job() {
+	//TODO implement me
+	println("implement me")
+}
+
+func (t TrackerSet) Init(fm *MetaDataInfo, trackerList ...string) {
 	//create new socket
 
 	if t.conn == nil {
@@ -67,7 +72,6 @@ func (t TrackerSet) Init(fm *MetaDataInfo, infoHash [20]byte, trackerList ...str
 	}
 
 	t.state = 1
-	fm.InfoHash = infoHash
 
 	//adding to tracker set
 	for _, val := range trackerList {
@@ -79,9 +83,6 @@ func (t TrackerSet) Init(fm *MetaDataInfo, infoHash [20]byte, trackerList ...str
 		}
 	}
 	t.establishConnection(fm)
-
-}
-func test() {
 
 }
 
