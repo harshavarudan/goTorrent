@@ -7,6 +7,8 @@ import (
 	"net"
 	"strings"
 	"time"
+
+	"github.com/harshavarudan/goTorrent/internal/worker"
 )
 
 // Single instance of tracker (only udp trackers)
@@ -27,14 +29,15 @@ type AnnounceRequest struct {
 }
 type TrackerSet struct {
 	conn  *net.UDPConn
-	state int //0 for tracker to stop tracking,1 to periodically check
+	state int
+	//0 for tracker to stop tracking,1 to periodically check
 	//Peer set for tracker, different from torrent peer set but essentially does the same
 	//Torrent peer set has to be put in sync with tracker peer set
 	//design decision for no reason
-	trackerSet map[Tracker]bool
+	trackerSet map[string]Tracker
+	dispatcher worker.Dispatcher
 	//TODO achieve unique peer id
 	//id is only generated once. Normally an id is set every time the client loads and should be the same until it’s closed.
-
 	//Add number of workers needed time for periodic check ...
 	workerCount                int
 	periodicCheckTimeInSeconds time.Duration
@@ -44,57 +47,87 @@ type Tracker struct {
 	isAlive        bool
 	retries        int
 	lastConnection time.Time
-}
-type TrackerJob struct {
-	trackerAddr string
-	// additional fields as needed
+	state          int //1 to represent it is available
 }
 
-func (t TrackerJob) job() {
-	//TODO implement me
-	println("implement me")
+func (t Tracker) makeCallAndUpdatePeerSet(ps *PeerSet) {
+
 }
 
-func (t TrackerSet) Init(fm *MetaDataInfo, trackerList ...string) {
+type JobFunc func()
+
+func (jf JobFunc) Job() {
+	jf()
+}
+
+func (ts TrackerSet) Start() {
+
+}
+func (ts TrackerSet) Loop(ps *PeerSet) {
+	for _, tracker := range ts.trackerSet {
+		if tracker.validToCall() {
+			ts.dispatcher.SendJob(JobFunc(func() {
+				tracker.makeCallAndUpdatePeerSet(ps)
+			}))
+		}
+	}
+}
+func (t Tracker) validToCall() bool {
+	return false
+}
+func (ts TrackerSet) Init(fm *MetaDataInfo) {
+	//Add list of trackers
+	trackerList := []string{fm.Announce}
+	for _, stringArr := range fm.AnnounceList {
+		if len(stringArr) != 0 {
+			trackerList = append(trackerList, stringArr[0])
+		}
+	}
+
 	//create new socket
-
-	if t.conn == nil {
+	if ts.conn == nil {
 		var err error
-		t.conn, err = net.ListenUDP("udp", nil)
+		ts.conn, err = net.ListenUDP("udp", nil)
 
 		if err != nil {
 			fmt.Println("Error creating UDP socket:", err)
 			return
 		}
 	}
-	if t.trackerSet == nil {
-		t.trackerSet = make(map[Tracker]bool)
-	}
 
-	t.state = 1
+	//set state
+	ts.state = 1
+
+	//Create Set
+	if ts.trackerSet == nil {
+		ts.trackerSet = make(map[string]Tracker)
+	}
 
 	//adding to tracker set
-	for _, val := range trackerList {
-		udpAddr, ok := parseUDPTrackerList(val)
+	for _, url := range trackerList {
+		udpAddr, ok := parseUDPTrackerList(url)
 		if ok {
-			//TODO
+
 			fmt.Println(udpAddr)
-			//t.trackerSet[udpAddr] = true
+			ts.trackerSet[url] = Tracker{
+				address:        udpAddr,
+				isAlive:        false,
+				retries:        0,
+				lastConnection: time.Time{},
+				state:          1,
+			}
 		}
 	}
-	t.establishConnection(fm)
 
 }
 
-// TODO establish via go routines
 // implement retry also
-func (t TrackerSet) establishConnection(fm *MetaDataInfo) {
+func (ts TrackerSet) establishConnection(fm *MetaDataInfo) {
 	//New Dispatcher
 
-	for tracker, ok := range t.trackerSet {
-		addresses := tracker.address
-		if ok {
-			id, err := establishConnection(t.conn, addresses)
+	for _, tracker := range ts.trackerSet {
+		if tracker.state == 1 {
+			id, err := establishConnection(ts.conn, tracker.address)
 			if err != nil {
 				fmt.Println("Error establishing connection:", err)
 				continue
@@ -116,11 +149,11 @@ func (t TrackerSet) establishConnection(fm *MetaDataInfo) {
 				left:         2097152, // Default value, replace with actual remaining size
 				uploaded:     0,
 				event:        0,
-				ip:           0,    // Default IP, tracker usually infers it
+				ip:           0,    // Default IP, address usually infers it
 				key:          0,    // Default key, replace with actual key
 				numWant:      -1,   // Default to requesting all peers
 				port:         6881, // Default port, replace with actual port if needed
-			}, t.conn, addresses)
+			}, ts.conn, tracker.address)
 
 		}
 	}
@@ -129,7 +162,7 @@ func (t TrackerSet) establishConnection(fm *MetaDataInfo) {
 
 // TODO parse only udp ones and not others and return bool
 func parseUDPTrackerList(url string) (*net.UDPAddr, bool) {
-
+	//TODO parse properly
 	url, _ = strings.CutPrefix(url, "udp://")
 	url, _ = strings.CutSuffix(url, "/announce")
 

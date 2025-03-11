@@ -19,7 +19,7 @@ type Dispatcher struct {
 }
 
 type Job interface {
-	job()
+	Job()
 }
 
 func NewDispatcher(maxWorkers int) *Dispatcher {
@@ -42,7 +42,7 @@ func (d *Dispatcher) Run() {
 	// Start all workers
 	for _, worker := range d.workers {
 		fmt.Println("Starting worker", worker.workerID)
-		go worker.job()
+		go worker.Job()
 	}
 
 	// Dispatch jobs to workers in a round-robin fashion
@@ -85,7 +85,7 @@ func (d *Dispatcher) AddWorker() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.workers = append(d.workers, newWorker)
-	go newWorker.job()
+	go newWorker.Job()
 
 }
 func (d *Dispatcher) SendJob(job Job) {
@@ -93,14 +93,14 @@ func (d *Dispatcher) SendJob(job Job) {
 	fmt.Println("Added job", job)
 }
 
-func (w *Worker) job() {
+func (w *Worker) Job() {
 	fmt.Printf("Worker %d is ready\n", w.workerID)
 	var lock sync.Mutex
 	for {
 		select {
 		case dt := <-w.jobSignal:
 			lock.Lock()
-			dt.job()
+			dt.Job()
 			fmt.Printf("Worker %d processing signal:", w.workerID)
 			lock.Unlock()
 		case <-w.quit:

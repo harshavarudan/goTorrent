@@ -19,7 +19,7 @@ func NewTorrent(filePath string) Torrent {
 		tracker: &TrackerSet{
 			conn:                       nil,
 			state:                      0,
-			trackerSet:                 map[Tracker]bool{},
+			trackerSet:                 map[string]Tracker{},
 			workerCount:                10, //default
 			periodicCheckTimeInSeconds: 60,
 		},
