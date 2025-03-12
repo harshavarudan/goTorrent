@@ -17,11 +17,10 @@ func NewTorrent(filePath string) Torrent {
 	return Torrent{
 		torrentFilePath: filePath,
 		tracker: &TrackerSet{
-			conn:                       nil,
-			state:                      0,
-			trackerSet:                 map[string]Tracker{},
-			workerCount:                10, //default
-			periodicCheckTimeInSeconds: 60,
+			conn:        nil,
+			state:       0,
+			trackerSet:  map[string]Tracker{},
+			workerCount: 10, //default
 		},
 		metaInfo:          &MetaDataInfo{},
 		PeerSet:           &PeerSet{},
@@ -33,4 +32,8 @@ func NewTorrent(filePath string) Torrent {
 func (t Torrent) ParseFile() error {
 	return ParseTorrentFile(t.torrentFilePath, t.metaInfo)
 
+}
+
+func (t Torrent) CreateTrackerSet() error {
+	return t.tracker.Init(t.metaInfo)
 }

@@ -1,11 +1,15 @@
 package torrent
 
-import "net"
+import (
+	"net"
+	"sync"
+)
 
 type PeerSet struct {
 	state             int
 	peerSet           map[peer]bool
 	downloadRateLimit int //in bytes
+	lock              sync.Mutex
 	//others as required
 }
 type peer struct {

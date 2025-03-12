@@ -4,8 +4,12 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
+	"maps"
+	"math"
 	"net"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/harshavarudan/goTorrent/internal/worker"
@@ -35,14 +39,18 @@ type TrackerSet struct {
 	//Torrent peer set has to be put in sync with tracker peer set
 	//design decision for no reason
 	trackerSet map[string]Tracker
-	dispatcher worker.Dispatcher
+	dispatcher *worker.Dispatcher
+	mu         sync.Mutex
+	quit       chan struct{}
 
 	//TODO achieve unique peer id
 	//id is only generated once. Normally an id is set every time the client loads and should be the same until it’s closed.
 	//Add number of workers needed time for periodic check ...
-	workerCount                int
-	periodicCheckTimeInSeconds time.Duration
+	workerCount int
 }
+
+var periodicCheckTimeInSeconds time.Duration = 60
+
 type Tracker struct {
 	address        *net.UDPAddr
 	isAlive        bool
@@ -51,7 +59,36 @@ type Tracker struct {
 	state          int //1 to represent it is available
 }
 
-func (t Tracker) makeCallAndUpdatePeerSet(ps *PeerSet) {
+func (t Tracker) makeCallAndUpdatePeerSet(ps *PeerSet, conn *net.UDPConn, infoHash [20]byte) {
+
+	id, err := establishConnection(conn, t.address)
+	if err != nil {
+		fmt.Println("Error establishing connection:", err)
+		return
+	}
+	//TODO change peer id
+	var peerID [20]byte
+	_, err = rand.Read(peerID[:])
+	if err != nil {
+		fmt.Println("Error generating peer ID:", err)
+		return
+	}
+	//change default values
+	//TODO get details of files from downloader struct?
+	receivedPacket := announce(AnnounceRequest{
+		connectionID: id,
+		infoHash:     infoHash,
+		peerID:       peerID,
+		downloaded:   0,
+		left:         2097152, // Default value, replace with actual remaining size
+		uploaded:     0,
+		event:        0,
+		ip:           0,    // Default IP, address usually infers it
+		key:          0,    // Default key, replace with actual key
+		numWant:      -1,   // Default to requesting all peers
+		port:         6881, // Default port, replace with actual port if needed
+	}, conn, t.address)
+	_ = receivedPacket
 
 }
 
@@ -61,25 +98,66 @@ func (jf JobFunc) Job() {
 	jf()
 }
 
-func (ts TrackerSet) Start() {
-
+func (ts *TrackerSet) Start(ps *PeerSet, mdi *MetaDataInfo) {
+	ts.dispatcher.Run()
+	go ts.StartLoop(ps, mdi)
 }
-func (ts TrackerSet) Loop(ps *PeerSet) {
-	for _, tracker := range ts.trackerSet {
-		if tracker.validToCall() {
-			ts.dispatcher.SendJob(JobFunc(func() {
-				tracker.makeCallAndUpdatePeerSet(ps)
-			}))
+
+// StartLoop processes one tracker per tick (1 second) and stops when quit is signaled.
+func (ts *TrackerSet) StartLoop(ps *PeerSet, mdi *MetaDataInfo) {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	counter := 0
+
+	for {
+		select {
+		case <-ts.quit:
+			fmt.Println("TrackerSet loop: received quit signal, stopping loop")
+			return
+		case <-ticker.C:
+
+			trackers := slices.Collect(maps.Keys(ts.trackerSet))
+			if len(trackers) == 0 {
+				continue
+			}
+			counter %= len(trackers)
+			tracker := ts.trackerSet[trackers[counter]]
+			counter++
+
+			if tracker.validToCall() {
+				tracker.lastConnection = time.Now()
+				ts.dispatcher.SendJob(JobFunc(func() {
+					tracker.makeCallAndUpdatePeerSet(ps, ts.conn, mdi.InfoHash)
+				}))
+			}
 		}
 	}
 }
-func (t Tracker) validToCall() bool {
-	return false
+func (ts *TrackerSet) StopLoop() {
+	close(ts.quit)
+	fmt.Println("TrackerSet loop has been killed.")
 }
-func (ts TrackerSet) Init(fm *MetaDataInfo) {
+func (t Tracker) validToCall() bool {
+	if t.state == 0 {
+		return false
+	}
+	if t.isAlive == false {
+		if time.Since(t.lastConnection) < time.Duration(math.Min(10*math.Pow(2, float64(t.retries)), 100))*time.Second {
+			return false
+		}
+
+	}
+	if t.isAlive == true && time.Since(t.lastConnection) < periodicCheckTimeInSeconds {
+		return false
+	}
+
+	return true
+}
+func (ts *TrackerSet) Init(mdi *MetaDataInfo) error {
 	//Add list of trackers
-	trackerList := []string{fm.Announce}
-	for _, stringArr := range fm.AnnounceList {
+	trackerList := []string{mdi.Announce}
+	for _, stringArr := range mdi.AnnounceList {
 		if len(stringArr) != 0 {
 			trackerList = append(trackerList, stringArr[0])
 		}
@@ -92,12 +170,17 @@ func (ts TrackerSet) Init(fm *MetaDataInfo) {
 
 		if err != nil {
 			fmt.Println("Error creating UDP socket:", err)
-			return
+			return err
 		}
 	}
 
 	//set state
 	ts.state = 1
+
+	ts.quit = make(chan struct{})
+
+	//set dispatcher
+	ts.dispatcher = worker.NewDispatcher(ts.workerCount)
 
 	//Create Set
 	if ts.trackerSet == nil {
@@ -119,46 +202,7 @@ func (ts TrackerSet) Init(fm *MetaDataInfo) {
 			}
 		}
 	}
-
-}
-
-// implement retry also
-func (ts TrackerSet) establishConnection(fm *MetaDataInfo) {
-	//New Dispatcher
-
-	for _, tracker := range ts.trackerSet {
-		if tracker.state == 1 {
-			id, err := establishConnection(ts.conn, tracker.address)
-			if err != nil {
-				fmt.Println("Error establishing connection:", err)
-				continue
-			}
-			//TODO change peer id
-			var peerID [20]byte
-			_, err = rand.Read(peerID[:])
-			if err != nil {
-				fmt.Println("Error generating peer ID:", err)
-				return
-			}
-			//change default values
-			//TODO get details of files from downloader struct?
-			announce(AnnounceRequest{
-				connectionID: id,
-				infoHash:     fm.InfoHash,
-				peerID:       peerID,
-				downloaded:   0,
-				left:         2097152, // Default value, replace with actual remaining size
-				uploaded:     0,
-				event:        0,
-				ip:           0,    // Default IP, address usually infers it
-				key:          0,    // Default key, replace with actual key
-				numWant:      -1,   // Default to requesting all peers
-				port:         6881, // Default port, replace with actual port if needed
-			}, ts.conn, tracker.address)
-
-		}
-	}
-
+	return nil
 }
 
 // TODO parse only udp ones and not others and return bool
@@ -219,7 +263,7 @@ func establishConnection(conn *net.UDPConn, addr *net.UDPAddr) (uint64, error) {
 
 // TODO add to peer set
 
-func announce(request AnnounceRequest, conn *net.UDPConn, addr *net.UDPAddr) {
+func announce(request AnnounceRequest, conn *net.UDPConn, addr *net.UDPAddr) []byte {
 	//Construct buffer
 	buffer := make([]byte, 98)
 	// Action for announce request is 1
@@ -283,5 +327,5 @@ func announce(request AnnounceRequest, conn *net.UDPConn, addr *net.UDPAddr) {
 	fmt.Println("Interval:", interval)
 	fmt.Println("Leechers:", leechers)
 	fmt.Println("Seeders:", seeders)
-
+	return received
 }
