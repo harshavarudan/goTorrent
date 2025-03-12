@@ -36,6 +36,7 @@ type TrackerSet struct {
 	//design decision for no reason
 	trackerSet map[string]Tracker
 	dispatcher worker.Dispatcher
+
 	//TODO achieve unique peer id
 	//id is only generated once. Normally an id is set every time the client loads and should be the same until it’s closed.
 	//Add number of workers needed time for periodic check ...
