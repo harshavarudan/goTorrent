@@ -16,24 +16,42 @@ func NewTorrent(filePath string) Torrent {
 
 	return Torrent{
 		torrentFilePath: filePath,
-		tracker: &TrackerSet{
-			conn:        nil,
-			state:       0,
-			trackerSet:  map[string]Tracker{},
-			workerCount: 10, //default
-		},
-		metaInfo:          &MetaDataInfo{},
-		PeerSet:           &PeerSet{},
-		currentFileStatus: &FileStatusMetadata{},
+		tracker:         NewTrackerSet(10),
+		metaInfo:        &MetaDataInfo{},
+		PeerSet:         NewPeerSet(),
 	}
 }
 
-// parse the file
-func (t Torrent) ParseFile() error {
-	return ParseTorrentFile(t.torrentFilePath, t.metaInfo)
-
+// ParseFile parse the file
+func (t *Torrent) ParseFile() error {
+	err := ParseTorrentFile(t.torrentFilePath, t.metaInfo)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+func (t *Torrent) GetFileInfoStatus() {
+	fm := t.GetCurrentFileStatusFromFile()
+	if fm != nil {
+		t.currentFileStatus = fm
+		return
+	} else { //download from scratch
+		t.currentFileStatus = &FileStatusMetadata{
+			downloaded: 0,
+			uploaded:   0,
+			left:       t.metaInfo.Info.Length,
+			isComplete: false,
+		}
+	}
+	//TODO  optional parse the file which gives file downloaded so far
+}
+func (t *Torrent) GetCurrentFileStatusFromFile() *FileStatusMetadata {
+	return nil
 }
 
-func (t Torrent) CreateTrackerSet() error {
+func (t *Torrent) CreateTracker() error {
 	return t.tracker.Init(t.metaInfo)
+}
+func (t *Torrent) StartTracker() {
+	t.tracker.Start(t.PeerSet, t.metaInfo, t.currentFileStatus)
 }

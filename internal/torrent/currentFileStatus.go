@@ -1,7 +1,12 @@
 package torrent
 
+import "sync"
+
 type FileStatusMetadata struct { //store this as a file
-	downloaded         uint64
-	left               uint64
+	downloaded         int64
+	left               int64
+	uploaded           int64
+	isComplete         bool
+	mu                 sync.RWMutex
 	downloadedFilePath string
 }

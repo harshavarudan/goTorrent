@@ -9,7 +9,6 @@ import (
 	"net"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/harshavarudan/goTorrent/internal/worker"
@@ -22,9 +21,9 @@ type AnnounceRequest struct {
 	connectionID uint64
 	infoHash     [20]byte
 	peerID       [20]byte
-	downloaded   uint64
-	left         uint64
-	uploaded     uint64
+	downloaded   int64
+	left         int64
+	uploaded     int64
 	event        uint32
 	ip           uint32
 	key          uint32
@@ -40,7 +39,6 @@ type TrackerSet struct {
 	//design decision for no reason
 	trackerSet map[string]Tracker
 	dispatcher *worker.Dispatcher
-	mu         sync.Mutex
 	quit       chan struct{}
 
 	//TODO achieve unique peer id
@@ -49,7 +47,8 @@ type TrackerSet struct {
 	workerCount int
 }
 
-var periodicCheckTimeInSeconds time.Duration = 60
+var periodicCheck time.Duration = 60
+var defaultPort uint16 = 6881
 
 type Tracker struct {
 	address        *net.UDPAddr
@@ -59,7 +58,7 @@ type Tracker struct {
 	state          int //1 to represent it is available
 }
 
-func (t Tracker) makeCallAndUpdatePeerSet(ps *PeerSet, conn *net.UDPConn, infoHash [20]byte) {
+func (t Tracker) makeCallAndUpdatePeerSet(ps *PeerSet, conn *net.UDPConn, infoHash [20]byte, fm *FileStatusMetadata) {
 
 	id, err := establishConnection(conn, t.address)
 	if err != nil {
@@ -74,22 +73,62 @@ func (t Tracker) makeCallAndUpdatePeerSet(ps *PeerSet, conn *net.UDPConn, infoHa
 		return
 	}
 	//change default values
-	//TODO get details of files from downloader struct?
+	fm.mu.RLock()
 	receivedPacket := announce(AnnounceRequest{
 		connectionID: id,
 		infoHash:     infoHash,
 		peerID:       peerID,
-		downloaded:   0,
-		left:         2097152, // Default value, replace with actual remaining size
-		uploaded:     0,
+		downloaded:   fm.downloaded,
+		left:         fm.left, // Default value, replace with actual remaining size
+		uploaded:     fm.uploaded,
 		event:        0,
-		ip:           0,    // Default IP, address usually infers it
-		key:          0,    // Default key, replace with actual key
-		numWant:      -1,   // Default to requesting all peers
-		port:         6881, // Default port, replace with actual port if needed
+		ip:           0,           // Default IP, address usually infers it
+		key:          0,           // Default key, replace with actual key
+		numWant:      -1,          // Default to requesting all peers
+		port:         defaultPort, // Default port, replace with actual port if needed
 	}, conn, t.address)
-	_ = receivedPacket
+	fm.mu.RUnlock()
+	peerList := getPeersFromAnnounceResponse(receivedPacket)
 
+	//Add to peer set
+	for _, p := range peerList {
+		ps.AddPeer(p)
+	}
+
+}
+
+func NewTrackerSet(workerCount int) *TrackerSet {
+	dispatcher := worker.NewDispatcher(workerCount)
+	dispatcher.Run()
+	return &TrackerSet{
+		trackerSet:  make(map[string]Tracker),
+		dispatcher:  dispatcher,
+		workerCount: workerCount,
+		quit:        make(chan struct{}),
+	}
+}
+func getPeersFromAnnounceResponse(receivedPacket []byte) []peer {
+	if len(receivedPacket) < 20 {
+		return nil // Not enough data to parse peers
+	}
+
+	var peers []peer
+	offset := 20 // Start reading peer data after tracker response header
+
+	for offset+6 <= len(receivedPacket) {
+		ip := net.IP(receivedPacket[offset : offset+4]).String()
+		port := int(receivedPacket[offset+4])<<8 | int(receivedPacket[offset+5]) // Convert bytes to int
+
+		p := peer{
+			IPAddress: ip,
+			tcpPort:   port,
+		}
+
+		peers = append(peers, p)
+		offset += 6 // Move to the next peer
+	}
+
+	return peers
 }
 
 type JobFunc func()
@@ -98,13 +137,13 @@ func (jf JobFunc) Job() {
 	jf()
 }
 
-func (ts *TrackerSet) Start(ps *PeerSet, mdi *MetaDataInfo) {
+func (ts *TrackerSet) Start(ps *PeerSet, mdi *MetaDataInfo, fm *FileStatusMetadata) {
 	ts.dispatcher.Run()
-	go ts.StartLoop(ps, mdi)
+	go ts.StartLoop(ps, mdi, fm)
 }
 
 // StartLoop processes one tracker per tick (1 second) and stops when quit is signaled.
-func (ts *TrackerSet) StartLoop(ps *PeerSet, mdi *MetaDataInfo) {
+func (ts *TrackerSet) StartLoop(ps *PeerSet, mdi *MetaDataInfo, fm *FileStatusMetadata) {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
@@ -128,7 +167,7 @@ func (ts *TrackerSet) StartLoop(ps *PeerSet, mdi *MetaDataInfo) {
 			if tracker.validToCall() {
 				tracker.lastConnection = time.Now()
 				ts.dispatcher.SendJob(JobFunc(func() {
-					tracker.makeCallAndUpdatePeerSet(ps, ts.conn, mdi.InfoHash)
+					tracker.makeCallAndUpdatePeerSet(ps, ts.conn, mdi.InfoHash, fm)
 				}))
 			}
 		}
@@ -148,7 +187,7 @@ func (t Tracker) validToCall() bool {
 		}
 
 	}
-	if t.isAlive == true && time.Since(t.lastConnection) < periodicCheckTimeInSeconds {
+	if t.isAlive == true && time.Since(t.lastConnection) < periodicCheck {
 		return false
 	}
 
@@ -261,8 +300,6 @@ func establishConnection(conn *net.UDPConn, addr *net.UDPAddr) (uint64, error) {
 
 }
 
-// TODO add to peer set
-
 func announce(request AnnounceRequest, conn *net.UDPConn, addr *net.UDPAddr) []byte {
 	//Construct buffer
 	buffer := make([]byte, 98)
@@ -294,9 +331,9 @@ func announce(request AnnounceRequest, conn *net.UDPConn, addr *net.UDPAddr) []b
 	binary.BigEndian.PutUint32(buffer[12:16], transactionID)
 	copy(buffer[16:36], request.infoHash[:])
 	copy(buffer[36:56], request.peerID[:])
-	binary.BigEndian.PutUint64(buffer[56:64], request.downloaded)
-	binary.BigEndian.PutUint64(buffer[64:72], request.left)
-	binary.BigEndian.PutUint64(buffer[72:80], request.uploaded)
+	binary.BigEndian.PutUint64(buffer[56:64], uint64(request.downloaded))
+	binary.BigEndian.PutUint64(buffer[64:72], uint64(request.left))
+	binary.BigEndian.PutUint64(buffer[72:80], uint64(request.uploaded))
 	binary.BigEndian.PutUint32(buffer[80:84], request.event)
 	binary.BigEndian.PutUint32(buffer[84:88], request.ip)
 	binary.BigEndian.PutUint32(buffer[88:92], request.key)

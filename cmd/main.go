@@ -10,7 +10,7 @@ func main() {
 	s := "internal/torrent/parser/Hotshots.torrent"
 	t := torrent.NewTorrent(s)
 	err := t.ParseFile()
-	err = t.CreateTrackerSet()
+	err = t.CreateTracker()
 	if err != nil {
 		return
 	}
