@@ -3,12 +3,12 @@ package torrent
 import (
 	"crypto/rand"
 	"encoding/binary"
+	"errors"
 	"fmt"
-	"maps"
 	"math"
 	"net"
-	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/harshavarudan/goTorrent/internal/worker"
@@ -37,7 +37,7 @@ type TrackerSet struct {
 	//Peer set for tracker, different from torrent peer set but essentially does the same
 	//Torrent peer set has to be put in sync with tracker peer set
 	//design decision for no reason
-	trackerSet map[string]Tracker
+	trackerSet map[string]*Tracker
 	dispatcher *worker.Dispatcher
 	quit       chan struct{}
 
@@ -47,7 +47,7 @@ type TrackerSet struct {
 	workerCount int
 }
 
-var periodicCheck time.Duration = 60
+var periodicCheck = 60 * time.Second
 var defaultPort uint16 = 6881
 
 type Tracker struct {
@@ -56,13 +56,18 @@ type Tracker struct {
 	retries        int
 	lastConnection time.Time
 	state          int //1 to represent it is available
+	mu             *sync.RWMutex
+	id             int
 }
 
-func (t Tracker) makeCallAndUpdatePeerSet(ps *PeerSet, conn *net.UDPConn, infoHash [20]byte, fm *FileStatusMetadata) {
-
+func (t *Tracker) makeCallAndUpdatePeerSet(ps *PeerSet, conn *net.UDPConn, infoHash [20]byte, fm *FileStatusMetadata) {
+	t.lastConnection = time.Now()
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	id, err := establishConnection(conn, t.address)
 	if err != nil {
 		fmt.Println("Error establishing connection:", err)
+		t.ConnFailed()
 		return
 	}
 	//TODO change peer id
@@ -74,7 +79,7 @@ func (t Tracker) makeCallAndUpdatePeerSet(ps *PeerSet, conn *net.UDPConn, infoHa
 	}
 	//change default values
 	fm.mu.RLock()
-	receivedPacket := announce(AnnounceRequest{
+	receivedPacket, err := announce(AnnounceRequest{
 		connectionID: id,
 		infoHash:     infoHash,
 		peerID:       peerID,
@@ -87,9 +92,17 @@ func (t Tracker) makeCallAndUpdatePeerSet(ps *PeerSet, conn *net.UDPConn, infoHa
 		numWant:      -1,          // Default to requesting all peers
 		port:         defaultPort, // Default port, replace with actual port if needed
 	}, conn, t.address)
-	fm.mu.RUnlock()
-	peerList := getPeersFromAnnounceResponse(receivedPacket)
 
+	fm.mu.RUnlock()
+	if err != nil {
+		t.ConnFailed()
+		return
+	}
+	t.ConnSuccess()
+	peerList := getPeersFromAnnounceResponse(receivedPacket)
+	for _, p := range peerList {
+		println("IP Address:"+p.IPAddress+" with port:", p.tcpPort)
+	}
 	//Add to peer set
 	for _, p := range peerList {
 		ps.AddPeer(p)
@@ -101,7 +114,7 @@ func NewTrackerSet(workerCount int) *TrackerSet {
 	dispatcher := worker.NewDispatcher(workerCount)
 	dispatcher.Run()
 	return &TrackerSet{
-		trackerSet:  make(map[string]Tracker),
+		trackerSet:  make(map[string]*Tracker),
 		dispatcher:  dispatcher,
 		workerCount: workerCount,
 		quit:        make(chan struct{}),
@@ -141,13 +154,21 @@ func (ts *TrackerSet) Start(ps *PeerSet, mdi *MetaDataInfo, fm *FileStatusMetada
 	ts.dispatcher.Run()
 	go ts.StartLoop(ps, mdi, fm)
 }
+func (t *Tracker) ConnFailed() {
+	t.retries += 1
+	t.isAlive = false
+	t.lastConnection = time.Now()
+}
+func (t *Tracker) ConnSuccess() {
+	t.retries = 0
+	t.isAlive = true
+	t.lastConnection = time.Now()
+}
 
 // StartLoop processes one tracker per tick (1 second) and stops when quit is signaled.
 func (ts *TrackerSet) StartLoop(ps *PeerSet, mdi *MetaDataInfo, fm *FileStatusMetadata) {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
-
-	counter := 0
 
 	for {
 		select {
@@ -155,20 +176,21 @@ func (ts *TrackerSet) StartLoop(ps *PeerSet, mdi *MetaDataInfo, fm *FileStatusMe
 			fmt.Println("TrackerSet loop: received quit signal, stopping loop")
 			return
 		case <-ticker.C:
-
-			trackers := slices.Collect(maps.Keys(ts.trackerSet))
-			if len(trackers) == 0 {
-				continue
+			//we will do a probabilistic fetch
+			var tracker *Tracker
+			for _, tracker = range ts.trackerSet {
+				break
 			}
-			counter %= len(trackers)
-			tracker := ts.trackerSet[trackers[counter]]
-			counter++
 
 			if tracker.validToCall() {
-				tracker.lastConnection = time.Now()
+				println("Tracker is valid to be called ", tracker.id)
 				ts.dispatcher.SendJob(JobFunc(func() {
+					println("Calling job tracker with add:", tracker.address)
+					tracker.lastConnection = time.Now()
 					tracker.makeCallAndUpdatePeerSet(ps, ts.conn, mdi.InfoHash, fm)
 				}))
+			} else {
+				println("Tracker is not valid to be called ", tracker.id)
 			}
 		}
 	}
@@ -177,7 +199,7 @@ func (ts *TrackerSet) StopLoop() {
 	close(ts.quit)
 	fmt.Println("TrackerSet loop has been killed.")
 }
-func (t Tracker) validToCall() bool {
+func (t *Tracker) validToCall() bool {
 	if t.state == 0 {
 		return false
 	}
@@ -201,7 +223,6 @@ func (ts *TrackerSet) Init(mdi *MetaDataInfo) error {
 			trackerList = append(trackerList, stringArr[0])
 		}
 	}
-
 	//create new socket
 	if ts.conn == nil {
 		var err error
@@ -223,24 +244,27 @@ func (ts *TrackerSet) Init(mdi *MetaDataInfo) error {
 
 	//Create Set
 	if ts.trackerSet == nil {
-		ts.trackerSet = make(map[string]Tracker)
+		ts.trackerSet = make(map[string]*Tracker)
 	}
 
 	//adding to tracker set
-	for _, url := range trackerList {
+	for id, url := range trackerList {
 		udpAddr, ok := parseUDPTrackerList(url)
 		if ok {
 
 			fmt.Println(udpAddr)
-			ts.trackerSet[url] = Tracker{
+			ts.trackerSet[url] = &Tracker{
 				address:        udpAddr,
 				isAlive:        false,
 				retries:        0,
 				lastConnection: time.Time{},
 				state:          1,
+				mu:             &sync.RWMutex{},
+				id:             id,
 			}
 		}
 	}
+	println("Number of trackers : ", len(ts.trackerSet))
 	return nil
 }
 
@@ -291,16 +315,17 @@ func establishConnection(conn *net.UDPConn, addr *net.UDPAddr) (uint64, error) {
 	}
 	r_action := binary.BigEndian.Uint32(received[0:4])
 	r_transactionID := binary.BigEndian.Uint32(received[4:8])
-	connectionID := binary.BigEndian.Uint64(received[8:16])
+
 	if r_action != 0 || r_transactionID != transactionID {
 		return 0, fmt.Errorf("action or transactionID mismatch ")
 	}
+	connectionID := binary.BigEndian.Uint64(received[8:16])
 	fmt.Println("Connection ID: ", connectionID)
 	return connectionID, nil
 
 }
 
-func announce(request AnnounceRequest, conn *net.UDPConn, addr *net.UDPAddr) []byte {
+func announce(request AnnounceRequest, conn *net.UDPConn, addr *net.UDPAddr) ([]byte, error) {
 	//Construct buffer
 	buffer := make([]byte, 98)
 	// Action for announce request is 1
@@ -342,6 +367,7 @@ func announce(request AnnounceRequest, conn *net.UDPConn, addr *net.UDPAddr) []b
 	_, err := conn.WriteToUDP(buffer, addr)
 	if err != nil {
 		fmt.Println("Error sending announce request:", err)
+		return nil, err
 	}
 	fmt.Println("Announce request sent to", addr.String())
 	//receive response
@@ -350,11 +376,14 @@ func announce(request AnnounceRequest, conn *net.UDPConn, addr *net.UDPAddr) []b
 	_, err = conn.Read(received)
 	if err != nil {
 		fmt.Println("Error receiving announce response:", err)
+		return nil, err
 	}
 	r_action := binary.BigEndian.Uint32(received[0:4])
 	r_transactionID := binary.BigEndian.Uint32(received[4:8])
 	if r_action != 1 || r_transactionID != transactionID {
 		fmt.Println("Action or transactionID mismatch")
+		err = errors.New("action or transactionID mismatch")
+		return nil, err
 	}
 	//parse response
 	fmt.Println("Announce response received from", addr.String())
@@ -364,5 +393,5 @@ func announce(request AnnounceRequest, conn *net.UDPConn, addr *net.UDPAddr) []b
 	fmt.Println("Interval:", interval)
 	fmt.Println("Leechers:", leechers)
 	fmt.Println("Seeders:", seeders)
-	return received
+	return received, nil
 }

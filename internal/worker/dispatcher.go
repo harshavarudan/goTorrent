@@ -47,13 +47,16 @@ func (d *Dispatcher) Run() {
 
 	// Dispatch jobs to workers in a round-robin fashion
 	go func() {
-		i := 0
+		workerIndex := 0
 		for dt := range d.jobChan {
 			d.mu.Lock()
-			workerIndex := i % len(d.workers)
-			i++
-			fmt.Printf("Dispatcher got signal:%d sending to worker %d\n", dt, i)
-			d.workers[workerIndex].jobSignal <- dt
+			workerIndex++
+			workerIndex %= len(d.workers)
+			fmt.Printf("Dispatcher got signal:%d sending to worker %d\n", dt, workerIndex)
+			go func() {
+				d.workers[workerIndex].jobSignal <- dt
+			}()
+
 			fmt.Printf("Dispatcher sent signal: %d to worker %d\n", dt, workerIndex)
 			d.mu.Unlock()
 		}
@@ -95,19 +98,19 @@ func (d *Dispatcher) SendJob(job Job) {
 
 func (w *Worker) Job() {
 	fmt.Printf("Worker %d is ready\n", w.workerID)
-	var lock sync.Mutex
+
 	for {
 		select {
 		case dt := <-w.jobSignal:
-			lock.Lock()
+
 			dt.Job()
-			fmt.Printf("Worker %d processing signal:", w.workerID)
-			lock.Unlock()
+			fmt.Println("Worker ", w.workerID, " processing signal:")
+
 		case <-w.quit:
-			lock.Lock()
-			fmt.Printf("Worker %d is quitting\n", w.workerID)
+
+			fmt.Printf("Worker %d is quitting\n\n", w.workerID)
 			close(w.jobSignal)
-			lock.Unlock()
+
 			return
 		}
 	}

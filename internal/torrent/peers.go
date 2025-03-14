@@ -8,7 +8,7 @@ import (
 
 type PeerSet struct {
 	state             int
-	peerSet           map[string]peer
+	peerSet           map[string]*peer
 	downloadRateLimit int //in kilo bytes
 	mu                sync.RWMutex
 	//others as required
@@ -28,11 +28,15 @@ type peer struct {
 func (ps *PeerSet) AddPeer(p peer) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
-	ps.peerSet[p.IPAddress] = p
+	if p.IPAddress == "0.0.0.0" || p.tcpPort == 0 {
+		return
+	}
+	ps.peerSet[p.IPAddress] = &p
+	println("Peer successfully added total length ", len(ps.peerSet))
 }
 func NewPeerSet() *PeerSet {
 	return &PeerSet{
-		peerSet:           make(map[string]peer),
+		peerSet:           make(map[string]*peer),
 		state:             1,
 		downloadRateLimit: 512,
 		mu:                sync.RWMutex{},

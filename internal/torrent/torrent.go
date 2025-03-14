@@ -9,7 +9,7 @@ type Torrent struct {
 	PeerSet           *PeerSet
 	currentFileStatus *FileStatusMetadata
 	//get default settings or store settings
-	//optional: pick where its left off in case server crashes
+	//optional: pick where it's left off in case server crashes
 }
 
 func NewTorrent(filePath string) Torrent {
