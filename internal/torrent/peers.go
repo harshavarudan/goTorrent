@@ -2,6 +2,7 @@ package torrent
 
 import (
 	"fmt"
+	"math"
 	"net"
 	"strconv"
 	"sync"
@@ -54,23 +55,16 @@ func (ps *PeerSet) Connect() {
 	ps.mu.RUnlock()
 
 	for _, p := range peers {
-		// Skip if already connected.
-		if p.isConnected {
+		if !p.ValidToCall() {
 			continue
 		}
-		// Throttle connection attempts (e.g., wait at least 30 seconds between attempts).
-		if time.Since(p.lastConnected) < 30*time.Second {
-			continue
-		}
-
-		// Update lastAttempted timestamp.
-		p.lastConnected = time.Now()
 
 		// Initiate connection in its own goroutine.
 		go func(peer *peer) {
 			address := net.JoinHostPort(peer.IPAddress, strconv.Itoa(peer.tcpPort))
 			tcpAddr, err := net.ResolveTCPAddr("tcp", address)
 			if err != nil {
+				p.state = 0
 				fmt.Printf("Error resolving address for %s: %v\n", address, err)
 				return
 			}
@@ -79,6 +73,7 @@ func (ps *PeerSet) Connect() {
 			if err != nil {
 				fmt.Printf("Error connecting to peer %s: %v\n", address, err)
 				peer.retries++
+				p.lastConnected = time.Now()
 				return
 			}
 
@@ -101,4 +96,17 @@ func NewPeerSet() *PeerSet {
 		downloadRateLimit: 512,
 		mu:                sync.RWMutex{},
 	}
+}
+
+func (p *peer) ConnectionError() {
+	p.isConnected = false
+	p.retries++
+	p.lastConnected = time.Now()
+}
+func (p *peer) ValidToCall() bool {
+	if p.isConnected || p.state == 0 ||
+		time.Since(p.lastConnected) < time.Duration(math.Min(5*math.Pow(2, float64(p.retries)), 250))*time.Second {
+		return false
+	}
+	return true
 }
