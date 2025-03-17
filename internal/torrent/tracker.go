@@ -167,7 +167,7 @@ func (t *Tracker) ConnSuccess() {
 
 // StartLoop processes one tracker per tick (1 second) and stops when quit is signaled.
 func (ts *TrackerSet) StartLoop(ps *PeerSet, mdi *MetaDataInfo, fm *FileStatusMetadata) {
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
@@ -188,9 +188,8 @@ func (ts *TrackerSet) StartLoop(ps *PeerSet, mdi *MetaDataInfo, fm *FileStatusMe
 					println("Calling job tracker with add:", tracker.address)
 					tracker.lastConnection = time.Now()
 					tracker.makeCallAndUpdatePeerSet(ps, ts.conn, mdi.InfoHash, fm)
+					time.Sleep(10 * time.Second)
 				}))
-			} else {
-				println("Tracker is not valid to be called ", tracker.id)
 			}
 		}
 	}
@@ -268,7 +267,7 @@ func (ts *TrackerSet) Init(mdi *MetaDataInfo) error {
 	return nil
 }
 
-// TODO parse only udp ones and not others and return bool
+// TODO optional add http support?
 func parseUDPTrackerList(url string) (*net.UDPAddr, bool) {
 	//TODO parse properly
 	url, _ = strings.CutPrefix(url, "udp://")

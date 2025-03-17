@@ -1,5 +1,7 @@
 package torrent
 
+import "fmt"
+
 type Torrent struct {
 	torrentFilePath string
 	tracker         *TrackerSet
@@ -54,4 +56,8 @@ func (t *Torrent) CreateTracker() error {
 }
 func (t *Torrent) StartTracker() {
 	t.tracker.Start(t.PeerSet, t.metaInfo, t.currentFileStatus)
+}
+func (t *Torrent) ConnectPeers() {
+	fmt.Println("Connecting peers")
+	t.PeerSet.Connect()
 }

@@ -1,26 +1,32 @@
 TODO
-thread pool
-restructure whole structs
-have downloader and uploader in the tracker
-updated set
+learn abt choking to see if it affects the current implementation
 
-use only getters for getting info no setters
-learn about downloader algo ie sequential rarest firs etc and implementation
+connect each peer in peer set to maintain a tcp connection have it recursive to maintain a alive status
 
-Torrent{
-    Metainfo
-    PeerId
+proper logging
 
-    tracker{
-        *FileStatusMetadata
-        *PeerId
-        downloader{
-        infoAbout downloaded stuff ig
+downloader checks filestatus to see what pieces it needs has smtg like a piece struct array [pieces]
+piece struct {
+isDone bool
+offset/pieceNumber
+lock sync.RMutex{}
+}
 
-        }
-        uploader{
-        not sure
-        }
+downloader has workers to ask peers for a Rlocked piece
+if it has the piece it creates a worker to download it (maybe have a max pieceWorkers limit for a peer)
+and also have a timeout and unlocks the piece
+download the piece write to disk set to isDone and then unlock the piece
 
-           }
-       }
+have the downloader take in a function at runtime that enables it to change the algorithm of piece selection
+
+limit number of peers user can connect and limit total download bandwidth and upload bandwidth
+[optional]
+limit them to the best n peers and have a worker to periodically check the speeds
+[only if total sum of peers speed is < max downloadable bandwidth] and go through rest of the peers
+ask a piece and set their download speeds and update them to the best n peers accordingly and close if needed
+
+
+
+create smtg call a flow strength which would be helpful for peer selection for asking pieces or number of pieces
+maintain a equal flow strength
+flowstrength = (number of pieces asked at once)/ speed of peer

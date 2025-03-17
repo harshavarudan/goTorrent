@@ -27,7 +27,7 @@ func NewDispatcher(maxWorkers int) *Dispatcher {
 	for i := 0; i < maxWorkers; i++ {
 		pool[i] = &Worker{
 			workerID:  i,
-			jobSignal: make(chan Job),
+			jobSignal: make(chan Job, 4), //TODO create queue size?
 			quit:      make(chan bool),
 		}
 	}
@@ -46,6 +46,7 @@ func (d *Dispatcher) Run() {
 	}
 
 	// Dispatch jobs to workers in a round-robin fashion
+	//TODO dispatch in least used maybe?
 	go func() {
 		workerIndex := 0
 		for dt := range d.jobChan {
@@ -53,10 +54,7 @@ func (d *Dispatcher) Run() {
 			workerIndex++
 			workerIndex %= len(d.workers)
 			fmt.Printf("Dispatcher got signal:%d sending to worker %d\n", dt, workerIndex)
-			go func() {
-				d.workers[workerIndex].jobSignal <- dt
-			}()
-
+			d.workers[workerIndex].jobSignal <- dt
 			fmt.Printf("Dispatcher sent signal: %d to worker %d\n", dt, workerIndex)
 			d.mu.Unlock()
 		}
@@ -102,9 +100,9 @@ func (w *Worker) Job() {
 	for {
 		select {
 		case dt := <-w.jobSignal:
-
+			fmt.Println("Worker ", w.workerID, " processing signal")
 			dt.Job()
-			fmt.Println("Worker ", w.workerID, " processing signal:")
+			fmt.Println("Worker ", w.workerID, " processed signal")
 
 		case <-w.quit:
 

@@ -17,7 +17,14 @@ func main() {
 		print(err)
 	}
 	t.StartTracker()
-	time.Sleep(100 * time.Second)
+	go func() {
+		for {
+			time.Sleep(30 * time.Second)
+			t.ConnectPeers()
+		}
+	}()
+	t.ConnectPeers()
+	time.Sleep(1000 * time.Second)
 
 }
 func test() {
