@@ -26,6 +26,14 @@ type peer struct {
 	bytesTransferred int
 	retries          int
 	conn             *net.TCPConn
+
+	//downloaded details
+	uploaded   int
+	downloaded int
+	choked     bool
+	interested bool
+
+	mu sync.RWMutex
 }
 
 func (ps *PeerSet) AddPeer(p peer) {
@@ -110,3 +118,5 @@ func (p *peer) ValidToCall() bool {
 	}
 	return true
 }
+
+//add
