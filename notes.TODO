@@ -1,7 +1,10 @@
 TODO
+https://wiki.theory.org/BitTorrentSpecification#keep-alive:_.3Clen.3D0000.3E
+
+
 learn abt choking to see if it affects the current implementation
 
-connect each peer in peer set to maintain a tcp connection have it recursive to maintain a alive status
+connect each peer in peer set to maintain a tcp connection have it recursive to maintain an alive status
 
 proper logging
 

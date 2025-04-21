@@ -28,10 +28,12 @@ type peer struct {
 	conn             *net.TCPConn
 
 	//downloaded details
-	uploaded   int
-	downloaded int
-	choked     bool
-	interested bool
+	uploaded        int
+	downloaded      int
+	am_choking      bool
+	am_interested   bool
+	peer_choking    bool
+	peer_interested bool
 
 	mu sync.RWMutex
 }
@@ -50,6 +52,8 @@ func (ps *PeerSet) AddPeer(p peer) {
 	if p.IPAddress == "0.0.0.0" || p.tcpPort == 0 {
 		return
 	}
+	p.state = 1
+	p.isConnected = false
 	ps.peerSet[p.IPAddress] = &p
 	println("Peer successfully added total length ", len(ps.peerSet))
 }
@@ -59,6 +63,7 @@ func (ps *PeerSet) Connect() {
 	peers := make([]*peer, 0, len(ps.peerSet))
 	for _, p := range ps.peerSet {
 		peers = append(peers, p)
+		fmt.Println("Peers for tcp connection", p)
 	}
 	ps.mu.RUnlock()
 
@@ -67,8 +72,9 @@ func (ps *PeerSet) Connect() {
 			continue
 		}
 
-		// Initiate connection in its own goroutine.
+		// Initiate connection in its own goroutine. //  ** * * ** *  (but y :(  )
 		go func(peer *peer) {
+			fmt.Println("Calling peer for tcp connection", p)
 			address := net.JoinHostPort(peer.IPAddress, strconv.Itoa(peer.tcpPort))
 			tcpAddr, err := net.ResolveTCPAddr("tcp", address)
 			if err != nil {
